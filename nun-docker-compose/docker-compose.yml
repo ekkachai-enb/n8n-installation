@@ -1,0 +1,80 @@
+version: '3.9'
+
+volumes:
+  db_storage:
+  n8n_storage:
+  redis_data:
+  qdrant_data:
+
+services:
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_NON_ROOT_USER
+      - POSTGRES_NON_ROOT_PASSWORD
+    volumes:
+      - db_storage:/var/lib/postgresql/data
+      - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:latest
+    container_name: my_redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: my_qdrant
+    environment:
+      # Optional: customize environment variables here if needed
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      # QDRANT__STORAGE__LOCATION: /qdrant/storage
+      # Additional Qdrant config can be added if necessary
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"  # HTTP API
+      - "6334:6334"  # gRPC API (optional)
+    # No "depends_on" is strictly required unless your app expects Qdrant to be ready first
+
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: always
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_SECURE_COOKIE=false
+      - N8N_PORT=443
+      - N8N_SSL_KEY=/ssl.key
+      - N8N_SSL_CERT=/ssl.cert
+      - N8N_PROTOCOL=https
+    ports:
+      - 443:443
+      - 80:80
+    links:
+      - postgres
+    volumes:
+      - n8n_storage:/home/node/.n8n
+      - ./ssl.key:/ssl.key
+      - ./ssl.cert:/ssl.cert
+    depends_on:
+      postgres:
+        condition: service_healthy
